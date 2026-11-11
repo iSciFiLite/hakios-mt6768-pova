@@ -60,8 +60,8 @@ jobs:
             device-tree-compiler flex gcc-aarch64-linux-gnu git libtinfo6 lld m4 make \
             perl python3 python3-pip uuid-dev xz-utils zstd
 
-          # Install official 7-Zip 24.08 standalone with full APFS container support
-          curl -fsSL 'https://www.7-zip.org/a/7z2408-linux-x64.tar.xz' | sudo tar -xJ -C /usr/local/bin 7zz
+          # Install official 7-Zip standalone with full APFS container support
+          curl -fsSL 'https://www.7-zip.org/a/7z2301-linux-x64.tar.xz' | sudo tar -xJ -C /usr/local/bin 7zz
           sudo ln -sf /usr/local/bin/7zz /usr/local/bin/7z
           7z --help | head -n 3
 
