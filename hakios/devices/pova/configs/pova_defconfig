@@ -1,0 +1,5 @@
+# HakiOS Tecno Pova LD7J profile: shared defaults, MT6768 bring-up, and board-specific facts.
+#include common_defconfig
+#include open.config
+#include mt6768.config
+#include pova.config

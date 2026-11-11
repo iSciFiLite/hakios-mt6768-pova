@@ -123,6 +123,7 @@ __pycache__/
 !/devices/qemu/
 !/devices/salaa/
 !/devices/nemo/
+!/devices/pova/
 
 # Device images and generated artifacts never belong in this source-only port.
 /prebuilt/**
