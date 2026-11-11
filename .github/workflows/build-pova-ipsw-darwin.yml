@@ -247,11 +247,7 @@ jobs:
              release-output/
           cp hakios/xl hakios/mtk/tools/system-flash.sh release-output/
 
-          # Compress 2.5 GB system.apfs with zstd
-          echo "Compressing system.apfs with zstd..."
-          zstd -T0 -3 hakios/userland/system.apfs -o release-output/system.apfs.zst
-
-          # Split uncompressed system.apfs to respect 2 GiB GitHub Release limit per asset
+          # Split uncompressed system.apfs to respect 2 GiB GitHub Release limit per asset (2 parts: part_aa & part_ab)
           echo "Splitting uncompressed system.apfs into 1800M parts..."
           split -b 1800M hakios/userland/system.apfs release-output/system.apfs.part_
 
@@ -272,11 +268,9 @@ jobs:
           ## 1. RAM-Only Fastboot Boot (Recommended)
           Zero changes to eMMC partitions. Both Darwin userland and XNU kernel run entirely in DRAM:
 
-          1. Reassemble `system.apfs` (if downloaded in parts):
+          1. Reassemble `system.apfs` (concatenates parts):
              ```bash
              cat system.apfs.part_* > system.apfs
-             # Or decompress:
-             # zstd -d system.apfs.zst -o system.apfs
              ```
 
           2. Put phone into Fastboot mode:
@@ -325,7 +319,7 @@ jobs:
 
           ## Included Assets
           - **Fastboot RAM Boot Image**: \`POVA_HAKIOS_XNU_BOOT.img\` (fastboot RAM temporary boot)
-          - **Darwin System APFS**: \`system.apfs.zst\` & \`system.apfs.part_*\` (2.5 GB Darwin 16.5 root container)
+          - **Darwin System APFS**: \`system.apfs.part_*\` (2.5 GB Darwin 16.5 root container; \`cat system.apfs.part_* > system.apfs\`)
           - **HakiOS Root APFS**: \`root.apfs\` (redwood init container with injected dylibs and launchd jobs)
           - **Restore IPSW**: \`POVA_HAKIOS_iOS16.5_Restore.ipsw.part_*\` (Complete restore bundle with manifests)
           - **Kernel**: \`hakios-kernel\` (XNU Darwin 22.5.0 with 7 native MT6768 drivers)
