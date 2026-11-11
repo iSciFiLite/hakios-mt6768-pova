@@ -1,0 +1,28 @@
+[Defines]
+  INF_VERSION                    = 0x00010005
+  BASE_NAME                      = MsdcBlockIoDxe
+  FILE_GUID                      = 5C8A7B2E-3E4F-4A1B-8C9D-0E1F2A3B4C5D
+  MODULE_TYPE                    = DXE_DRIVER
+  VERSION_STRING                 = 1.0
+  ENTRY_POINT                    = MsdcBlockIoDxeInitialize
+
+[Sources]
+  MsdcBlockIoDxe.c
+
+[Packages]
+  MdePkg/MdePkg.dec
+  EmbeddedPkg/EmbeddedPkg.dec
+
+[LibraryClasses]
+  UefiDriverEntryPoint
+  UefiBootServicesTableLib
+  DebugLib
+  BaseMemoryLib
+  MemoryAllocationLib
+  IoLib
+
+[Protocols]
+  gEfiBlockIoProtocolGuid
+
+[Depex]
+  TRUE

@@ -1,0 +1,13 @@
+## @file
+#  Tecno Pova LD7J Platform Package Declaration.
+#  SPDX-License-Identifier: BSD-2-Clause-Patent
+##
+
+[Defines]
+  DEC_SPECIFICATION              = 0x00010005
+  PACKAGE_NAME                   = PovaPkg
+  PACKAGE_GUID                   = 6D6E1A20-6768-4678-8567-676800000030
+  PACKAGE_VERSION                = 0.1
+
+[Includes]
+  Include

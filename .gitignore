@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+*$py.class
+/input/
+/release-output/
+/xnu-output/
+/build-logs/
+/hakios-uefi/
+/mu/
+.DS_Store
+*.swp
+*.bak
+hakios/.config
+hakios/.config.old

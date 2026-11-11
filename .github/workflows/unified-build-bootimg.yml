@@ -1,0 +1,244 @@
+name: Build and Release Unified POVA HakiOS
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Release tag name (e.g. v1.0.0-pova-unified)'
+        required: false
+        default: 'v1.0.0-pova-unified'
+      publish_release:
+        description: 'Publish GitHub Release'
+        type: boolean
+        default: true
+      build_uefi_from_source:
+        description: 'Build Mu-Silicium UEFI from source (default: true)'
+        type: boolean
+        default: true
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - name: Checkout Unified Repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Checkout pinned HakiOS UEFI integration
+        uses: actions/checkout@v4
+        with:
+          repository: oosexgang/hakios-uefi
+          ref: 687fa6c6a5a70f43184de92980e0a76eea5f2c4b
+          path: hakios-uefi
+          fetch-depth: 1
+
+      - name: Checkout HakiOS-pinned Mu-Silicium workspace
+        uses: actions/checkout@v4
+        with:
+          repository: Project-Silicium/Mu-Silicium
+          ref: e51cd877e31c8fbb322032dc4cb6715e83d25ad3
+          path: mu
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Install Linux XNU dependencies and pinned Theos toolchain
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes autoconf automake bison build-essential clang curl device-tree-compiler flex gcc-aarch64-linux-gnu git libtinfo6 lld m4 make perl python3 uuid-dev xz-utils
+          mkdir -p "$HOME/theos/toolchain"
+          curl --fail --location --retry 3 \
+            'https://github.com/L1ghtmann/llvm-project/releases/download/test-210562a/iOSToolchain-x86_64.tar.xz' \
+            --output "$RUNNER_TEMP/iOSToolchain-x86_64.tar.xz"
+          echo 'a72a7a577e2fbe2838b6b5e9c72034fa7d114af96f0e1d4b016f18730ce4056e  '"$RUNNER_TEMP/iOSToolchain-x86_64.tar.xz" | sha256sum --check -
+          tar -xJf "$RUNNER_TEMP/iOSToolchain-x86_64.tar.xz" -C "$HOME/theos/toolchain"
+          if [ ! -d "$HOME/theos/sdks/iPhoneOS16.5.sdk" ]; then
+            git init "$HOME/theos/sdks-git"
+            git -C "$HOME/theos/sdks-git" remote add origin https://github.com/theos/sdks.git
+            git -C "$HOME/theos/sdks-git" sparse-checkout init --cone
+            git -C "$HOME/theos/sdks-git" sparse-checkout set iPhoneOS16.5.sdk
+            git -C "$HOME/theos/sdks-git" fetch --depth 1 origin 0222fd5413cf4b9af096f37b4621afa2688572f7
+            git -C "$HOME/theos/sdks-git" checkout --detach FETCH_HEAD
+            mkdir -p "$HOME/theos/sdks"
+            ln -s ../sdks-git/iPhoneOS16.5.sdk "$HOME/theos/sdks/iPhoneOS16.5.sdk"
+          fi
+
+      - name: Obtain POVA UEFI FD and BootShim
+        env:
+          BUILD_FROM_SOURCE: ${{ github.event.inputs.build_uefi_from_source || 'true' }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p input/uefi
+          if [ "$BUILD_FROM_SOURCE" = "false" ] && gh release download --repo "$GITHUB_REPOSITORY" --pattern 'POVA_EFI*.fd' --dir input/uefi 2>/dev/null; then
+            echo "Using verified POVA UEFI FD and BootShim from release..."
+            mv input/uefi/POVA_EFI*.fd input/uefi/POVA_EFI.fd
+            gh release download --repo "$GITHUB_REPOSITORY" --pattern 'POVA_BootShim*.bin' --dir input/uefi
+            mv input/uefi/POVA_BootShim*.bin input/uefi/POVA_BootShim.bin
+          else
+            echo "Building Mu-Silicium UEFI from source for POVA..."
+            bash uefi/tools/prepare-hakios-mu.sh "$GITHUB_WORKSPACE/hakios-uefi" "$GITHUB_WORKSPACE/mu"
+            (cd mu && ./setup_env.sh -p apt)
+            (cd mu && python3 build_uefi.py -d Pova -r DEBUG -c)
+            make -C mu/BootShim \
+              REQUIRES_KERNEL_HEADER=1 \
+              FD_BASE=0x40000000 \
+              FD_SIZE=0x00400000 \
+              'CFLAGS=--target=aarch64-linux-gnu -DPAYLOAD_BASE=0xF0000000'
+            fd="$(find mu/Build -type f -iname 'POVA_EFI.fd' -print -quit)"
+            test -n "$fd" || { echo "POVA_EFI.fd not found in Mu-Silicium build tree" >&2; exit 1; }
+            cp "$fd" input/uefi/POVA_EFI.fd
+            cp mu/BootShim/BootShim.bin input/uefi/POVA_BootShim.bin
+          fi
+          test -s input/uefi/POVA_EFI.fd
+          test -s input/uefi/POVA_BootShim.bin
+
+      - name: Build POVA MT6768 XNU Kernel & open hello ramdisk
+        run: |
+          set -euo pipefail
+          cd hakios
+          make DEVICE=pova pova_defconfig
+          xnu/apply.sh
+          xnu-deps/setup.sh --stage1
+          ln -sfn "$HOME/theos/toolchain/linux/iphone/bin/dsymutil" xnu-deps/host/bin/dsymutil
+          xnu-deps/setup.sh --stage2
+          make DEVICE=pova JOBS=$(nproc) kernel
+          make DEVICE=pova hello
+          PLACEHOLDER=1 xnuloader/mkidentity.sh
+          HAKIOS_PLATFORM=mt6768 xnuloader/build.sh
+          mkdir -p ../xnu-output
+          cp hakios-kernel userland/hello xnuloader/loader.efi ../xnu-output/
+          kernel_version="$(python3 tools/kernel-version.py)"
+          python3 xnuloader/mkpayload.py \
+            --kernel-version "$kernel_version" \
+            --cmdline 'cpus=8 bootcpu=7 emmc=1 emmc_root=1 touchscreen=1' \
+            -o ../xnu-output/POVA_XNUP.bin \
+            kernel=hakios-kernel ramdisk=userland/hello
+          cat > ../xnu-output/XNU-PROVENANCE.md <<EOF
+          # POVA MT6768 HakiOS XNU Kernel and Payload Provenance
+
+          - Repository: \`iSciFiLite/hakios-mt6768-pova\`
+          - Commit: \`${GITHUB_SHA}\`
+          - Device: Tecno Pova (LD7j / MT6768 / MT6769V / Helio G80)
+          - Kernel: XNU Darwin 22.5.0 (ARMv8.2-A, 8 cores, boot core 7)
+          - Active Drivers:
+            * Mali-G52 2EEMC2 Bifrost GPU (\`hakios.mali.cpp\`)
+            * FocalTech SPI Touch Screen (\`hakios.fts.c\`)
+            * MT6358 PWRKEY & Keypad Buttons (\`hakios.mtk_keys.c\`)
+            * MT6768 CONNSYS Radio (\`hakios.mtk_connsys.c\`)
+            * MT6768 SCP Sensor Co-Processor (\`hakios.mtk_scp.c\`)
+            * Synaptics TCM Touch Controller (\`hakios.tcm.c\`)
+            * MSDC0 eMMC 5.1 Storage (\`hakios.mtk_emmc.c\`)
+          - Ramdisk: Open raw-syscall \`hello\`
+          - Cmdline: \`cpus=8 bootcpu=7 emmc=1 emmc_root=1 touchscreen=1\`
+          EOF
+
+      - name: Download stock LD7J boot template & Android boot tools
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p input/tools
+          curl --fail --location \
+            'https://android.googlesource.com/platform/system/tools/mkbootimg/+/d2bb0af5ba6d3198a3e99529c97eda1be0b5a093/unpack_bootimg.py?format=TEXT' \
+            | base64 -d > input/tools/unpack_bootimg.py
+          echo 'a9d260978a63bd06a24b6347e7dee8a28ff96639793caea15dff6aa491316308  input/tools/unpack_bootimg.py' | sha256sum -c -
+          curl --fail --location \
+            'https://raw.githubusercontent.com/Project-Silicium/Mu-Silicium/4bd8ae83bf37de41777f19e0777db70f59383a6d/Resources/Scripts/mkbootimg.py' \
+            --output input/tools/mkbootimg.py
+          echo '55037fd1a6d6cd861add76c2083d5d4321373bf714acae3f6a40deb004c27d47  input/tools/mkbootimg.py' | sha256sum -c -
+          gh release download pova-bootimg-input \
+            --repo "$GITHUB_REPOSITORY" --pattern boot.img --dir input
+          mv input/boot.img input/stock-boot.img
+          echo 'd8f21f125ec880d91b1769a5c6c6d6a3b0c7f76f4fd0663d6649682f421dfc5a  input/stock-boot.img' | sha256sum -c -
+
+      - name: Assemble Unified Fastboot Boot Image
+        run: |
+          set -euo pipefail
+          mkdir -p release-output
+          fd_sha="$(sha256sum input/uefi/POVA_EFI.fd | awk '{print $1}')"
+          shim_sha="$(sha256sum input/uefi/POVA_BootShim.bin | awk '{print $1}')"
+          python3 uefi/tools/pack-pova-bootimg.py \
+            --stock-boot input/stock-boot.img \
+            --fd input/uefi/POVA_EFI.fd \
+            --shim input/uefi/POVA_BootShim.bin \
+            --xnup xnu-output/POVA_XNUP.bin \
+            --fd-sha256 "$fd_sha" \
+            --shim-sha256 "$shim_sha" \
+            --unpack-bootimg input/tools/unpack_bootimg.py \
+            --mkbootimg input/tools/mkbootimg.py \
+            --out-dir release-output \
+            --source-commit "$GITHUB_SHA" \
+            --xnu-source-commit "$GITHUB_SHA" \
+            --fd-release "unified-$GITHUB_SHA" \
+            --image-name POVA_HAKIOS_XNU_BOOT.img
+          cp xnu-output/POVA_XNUP.bin xnu-output/hakios-kernel xnu-output/hello xnu-output/XNU-PROVENANCE.md release-output/
+          cp input/uefi/POVA_EFI.fd input/uefi/POVA_BootShim.bin release-output/
+          cp xnu-output/loader.efi release-output/
+          (cd release-output && sha256sum POVA_HAKIOS_XNU_BOOT.img POVA_XNUP.bin hakios-kernel hello loader.efi POVA_EFI.fd POVA_BootShim.bin > SHA256SUMS)
+          (cd release-output && sha256sum -c SHA256SUMS)
+
+      - name: Upload Complete Unified Boot Release Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: POVA-HAKIOS-UNIFIED-BOOT-${{ github.sha }}
+          path: release-output/*
+          retention-days: 30
+
+      - name: Publish Unified Release
+        if: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || (github.event_name == 'workflow_dispatch' && github.event.inputs.publish_release != 'false') }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            tag="${GITHUB_REF#refs/tags/}"
+          elif [ -n "${{ github.event.inputs.release_tag }}" ]; then
+            tag="${{ github.event.inputs.release_tag }}"
+          else
+            tag="v1.0.0-pova-unified-${GITHUB_RUN_ID}"
+          fi
+          cat > release-output/release-notes.md <<EOF
+          # POVA HakiOS MT6768 Unified Release ($tag)
+
+          Unified inclusive development release for Tecno Pova (LD7j / ld7j_h694 / MT6768 / MT6769V / Helio G80).
+          Combines the POVA Mu-Silicium UEFI firmware, AArch64 BootShim, and HakiOS XNU Darwin kernel with the complete native MT6768 driver suite.
+
+          ## Highlights
+          - **Unified Fastboot Boot Image**: \`POVA_HAKIOS_XNU_BOOT.img\` (Android v2 header, temporary RAM boot)
+          - **XNU Kernel**: \`hakios-kernel\` with 7 native MT6768 drivers (Mali-G52 GPU, FocalTech SPI Touch, MT6358 PWRKEY / Keypad, MT6768 CONNSYS wireless, MT6768 SCP Sensor Co-Processor, Synaptics TCM Touch, MSDC0 eMMC 5.1 storage)
+          - **Userland Ramdisk**: \`hello\` open raw-syscall executable (free of proprietary Apple blobs)
+          - **Container**: \`POVA_XNUP.bin\` packaged payload (\`cpus=8 bootcpu=7 emmc=1 emmc_root=1 touchscreen=1\`)
+          - **Firmware**: \`POVA_EFI.fd\` (4 MiB) and \`POVA_BootShim.bin\`
+          - **Source Commits**: Monorepo \`${GITHUB_SHA}\`
+
+          ## Boot Instructions
+          > [!WARNING]
+          > DO NOT FLASH TO STORAGE PARTITIONS. Use temporary RAM boot only:
+          \`\`\`bash
+          fastboot boot POVA_HAKIOS_XNU_BOOT.img
+          \`\`\`
+          EOF
+
+          # If release already exists, upload assets to it; otherwise create it
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$tag" \
+              --repo "$GITHUB_REPOSITORY" \
+              --clobber \
+              release-output/*
+          else
+            gh release create "$tag" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "POVA HakiOS MT6768 Unified Release $tag" \
+              --notes-file release-output/release-notes.md \
+              --target "$GITHUB_SHA" \
+              release-output/*
+          fi
