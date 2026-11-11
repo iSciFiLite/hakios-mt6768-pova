@@ -168,10 +168,8 @@ jobs:
             cp mu/BootShim/BootShim.bin input/uefi/POVA_BootShim.bin
           else
             echo "Obtaining verified POVA UEFI FD and BootShim from release..."
-            gh release download v1.0.0-pova-unified --repo "$GITHUB_REPOSITORY" --pattern 'POVA_EFI*.fd' --dir input/uefi
-            mv input/uefi/POVA_EFI*.fd input/uefi/POVA_EFI.fd
-            gh release download v1.0.0-pova-unified --repo "$GITHUB_REPOSITORY" --pattern 'POVA_BootShim*.bin' --dir input/uefi
-            mv input/uefi/POVA_BootShim*.bin input/uefi/POVA_BootShim.bin
+            gh release download v1.0.0-pova-unified --repo "$GITHUB_REPOSITORY" --pattern 'POVA_EFI.fd' --dir input/uefi
+            gh release download v1.0.0-pova-unified --repo "$GITHUB_REPOSITORY" --pattern 'POVA_BootShim.bin' --dir input/uefi
           fi
           test -s input/uefi/POVA_EFI.fd
           test -s input/uefi/POVA_BootShim.bin
