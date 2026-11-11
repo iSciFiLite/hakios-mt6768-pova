@@ -40,7 +40,7 @@ typedef struct {
   BOOLEAN               Initialized;
 } MSDC_DEVICE;
 
-static MSDC_DEVICE mMsdcDevice;
+STATIC MSDC_DEVICE mMsdcDevice;
 
 STATIC
 EFI_STATUS
@@ -111,10 +111,10 @@ MsdcBlockIoDxeInitialize (
   UINT32 MsdcCfg;
   UINT32 SdcSts;
 
-  DEBUG ((DEBUG_INFO, "MsdcBlockIoDxe: Probing MT6768 MSDC0 at 0x%llX...\n", MT6768_MSDC0_BASE));
+  DEBUG ((DEBUG_INFO, "MsdcBlockIoDxe: Probing MT6768 MSDC0 at 0x%08llX...\n", (UINT64)MT6768_MSDC0_BASE));
 
-  MsdcCfg = MmioRead32 (MT6768_MSDC0_BASE + MSDC_CFG);
-  SdcSts  = MmioRead32 (MT6768_MSDC0_BASE + SDC_STS);
+  MsdcCfg = MmioRead32 ((UINTN)(MT6768_MSDC0_BASE + MSDC_CFG));
+  SdcSts  = MmioRead32 ((UINTN)(MT6768_MSDC0_BASE + SDC_STS));
 
   DEBUG ((DEBUG_INFO, "MsdcBlockIoDxe: MSDC_CFG=0x%08X, SDC_STS=0x%08X\n", MsdcCfg, SdcSts));
 

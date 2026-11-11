@@ -87,7 +87,11 @@ jobs:
             echo "Building Mu-Silicium UEFI from source for POVA..."
             bash uefi/tools/prepare-hakios-mu.sh "$GITHUB_WORKSPACE/hakios-uefi" "$GITHUB_WORKSPACE/mu"
             (cd mu && ./setup_env.sh -p apt)
-            (cd mu && python3 build_uefi.py -d Pova -r DEBUG -c)
+            (cd mu && python3 build_uefi.py -d Pova -r DEBUG -c) || {
+              find mu/Build -name "BUILDLOG_*.txt" -exec tail -n 120 {} +
+              find mu/Build -name "OVERRIDELOG.TXT" -exec cat {} +
+              exit 1
+            }
             make -C mu/BootShim \
               REQUIRES_KERNEL_HEADER=1 \
               FD_BASE=0x40000000 \
