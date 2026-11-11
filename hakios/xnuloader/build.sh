@@ -6,6 +6,7 @@ PLATFORM_CFLAGS=()
 case "${HAKIOS_PLATFORM:-auto}" in
 	auto|qemu-virt|redwood) ;;
 	mt6785) PLATFORM_CFLAGS=(-DHAKIOS_PLATFORM_MT6785=1) ;;
+	mt6768) PLATFORM_CFLAGS=(-DHAKIOS_PLATFORM_MT6768=1) ;;
 	*) echo "xnuloader: unknown HAKIOS_PLATFORM=${HAKIOS_PLATFORM}" >&2; exit 2 ;;
 esac
 # the iPhone's identity for XNU, from the device tree of the builder's own IPSW (not in the repository)

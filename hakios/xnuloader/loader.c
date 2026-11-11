@@ -176,7 +176,7 @@ static int screen_quiet;
  */
 static int screen_quiet_before_run;
 
-#if defined(HAKIOS_PLATFORM_MT6785)
+#if defined(HAKIOS_PLATFORM_MT6785) || defined(HAKIOS_PLATFORM_MT6768)
 static inline void
 mtk_uart_putc(char c)
 {
@@ -194,7 +194,7 @@ put_char(char c)
 {
 	char16 w[3] = { 0, 0, 0 };
 
-#if defined(HAKIOS_PLATFORM_MT6785)
+#if defined(HAKIOS_PLATFORM_MT6785) || defined(HAKIOS_PLATFORM_MT6768)
 	if (c == '\n') {
 		mtk_uart_putc('\r');
 	}
@@ -613,6 +613,7 @@ static const struct platform platform_redwood __attribute__((unused)) = {
 	.small_core_hz = 1800000000ULL, .big_core_hz = 2400000000ULL,
 };
 
+#if defined(HAKIOS_PLATFORM_MT6785)
 /* MT6785 (Realme 7 SALAA / Realme 6 Nemo), from the vendor and mainline device trees.
  * The two clusters are numbered in MPIDR Aff1: A55 cores 0..5, performance cores 6..7.
  * The UFSHCI base is shared by both handsets; board-level UFS power and firmware remain
@@ -625,6 +626,21 @@ static const struct platform platform_mt6785 = {
 	.small_cores = 0x3f,
 	.small_core_hz = 1701000000ULL, .big_core_hz = 2171000000ULL,
 };
+#endif
+
+#if defined(HAKIOS_PLATFORM_MT6768)
+/* MT6768 (Tecno Pova LD7J / Helio G80), from live device tree.
+ * 8 Cores: 6x Cortex-A55 @ 1.8 GHz + 2x Cortex-A75 @ 2.0 GHz.
+ * eMMC 5.1 host controller MSDC0 at 0x11230000. */
+static const struct platform platform_mt6768 = {
+	.name = "mt6768", .io_base = 0x08000000, .io_size = 0x10000000,
+	.gic_dist = 0x0c000000, .gic_redist = 0x0c040000, .uart = 0x11002000ULL,
+	.ufs_hc_pa = 0, .log_other_cpu = 1,
+	.cores = 8, .core_shift = 8,
+	.small_cores = 0x3f,
+	.small_core_hz = 1800000000ULL, .big_core_hz = 2000000000ULL,
+};
+#endif
 
 /* ------------------------------------------------------------------------ */
 
@@ -3480,7 +3496,7 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 	if (plat->uart != 0) {
 		dt_begin(&w, "uart0");
 		dt_prop_str(&w, "device_type", "uart");
-#if defined(HAKIOS_PLATFORM_MT6785)
+#if defined(HAKIOS_PLATFORM_MT6785) || defined(HAKIOS_PLATFORM_MT6768)
 		dt_prop_str(&w, "compatible", "mediatek,mt6577-uart");
 #else
 		dt_prop_str(&w, "compatible", "arm,pl011");
@@ -4140,7 +4156,7 @@ be32(uint32_t v)
 	return __builtin_bswap32(v);
 }
 
-#if !defined(HAKIOS_PLATFORM_MT6785)
+#if !defined(HAKIOS_PLATFORM_MT6785) && !defined(HAKIOS_PLATFORM_MT6768)
 static void
 fw_cfg_read(void *buf, uint32_t len)
 {
@@ -4386,7 +4402,9 @@ efi_main(efi_handle image, efi_system_table *st)
 	print("CurrentEL=%x MIDR=%x MMFR0=%x CNTFRQ=%d image=%x\n", READ_SYSREG(CurrentEL) >> 2, READ_SYSREG(MIDR_EL1),
 	    READ_SYSREG(ID_AA64MMFR0_EL1), READ_SYSREG(CNTFRQ_EL0), (uint64_t)(uintptr_t)&__ImageBase);
 
-#if defined(HAKIOS_PLATFORM_MT6785)
+#if defined(HAKIOS_PLATFORM_MT6768)
+	PLAT = &platform_mt6768;
+#elif defined(HAKIOS_PLATFORM_MT6785)
 	PLAT = &platform_mt6785;
 #else
 	PLAT = &platform_qemu_virt;
@@ -4400,13 +4418,13 @@ efi_main(efi_handle image, efi_system_table *st)
 		SCREEN.height = GOP->mode->info->height;
 		SCREEN.stride = GOP->mode->info->pixels_per_scanline * 4;
 		if (SCREEN.base == 0xE1000000ULL) {
-#if defined(HAKIOS_PLATFORM_MT6785)
+#if defined(HAKIOS_PLATFORM_MT6785) || defined(HAKIOS_PLATFORM_MT6768)
 			/* A framebuffer address is not a SoC identity; keep the build-selected MTK platform. */
 #else
 			PLAT = &platform_redwood;
 #endif
 		} else {
-#if defined(HAKIOS_PLATFORM_MT6785)
+#if defined(HAKIOS_PLATFORM_MT6785) || defined(HAKIOS_PLATFORM_MT6768)
 			/* Use the firmware's GOP framebuffer directly; QEMU ramfb is not a phone display. */
 #else
 			ramfb_phone_screen();
