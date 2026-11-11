@@ -9,7 +9,7 @@ text = source.read_text()
 ranges = []
 
 for match in re.finditer(
-    r'\{\s*"([^"]+)"\s*,\s*(0x[0-9A-Fa-f]+)\s*,\s*(0x[0-9A-Fa-f]+)\s*,\s*AddMem',
+    r'\{\s*"([^"]+)"\s*,\s*(0x[0-9A-Fa-f]+)(?:ULL)?\s*,\s*(0x[0-9A-Fa-f]+)(?:ULL)?\s*,\s*AddMem',
     text,
 ):
     name, start, size = match.groups()
