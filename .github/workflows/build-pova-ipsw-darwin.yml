@@ -1,0 +1,359 @@
+name: Build and Release HakiOS POVA iOS 16.5 IPSW & Darwin Images
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Release tag (e.g. v1.0.0-pova-ios16.5-darwin)'
+        required: false
+        default: 'v1.0.0-pova-ios16.5-darwin'
+      target_repo:
+        description: 'Target private repository for release publication'
+        required: false
+        default: 'iSciFiLite/hakios-pova-private'
+      publish_release:
+        description: 'Publish Release to Private Repository'
+        type: boolean
+        default: true
+      build_uefi_from_source:
+        description: 'Build Mu-Silicium UEFI from source (false uses verified release artifacts)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release-ipsw:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - name: Checkout Monorepo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Checkout pinned HakiOS UEFI integration (conditional)
+        if: ${{ github.event.inputs.build_uefi_from_source == 'true' }}
+        uses: actions/checkout@v4
+        with:
+          repository: oosexgang/hakios-uefi
+          ref: 687fa6c6a5a70f43184de92980e0a76eea5f2c4b
+          path: hakios-uefi
+          fetch-depth: 1
+
+      - name: Checkout HakiOS-pinned Mu-Silicium workspace (conditional)
+        if: ${{ github.event.inputs.build_uefi_from_source == 'true' }}
+        uses: actions/checkout@v4
+        with:
+          repository: Project-Silicium/Mu-Silicium
+          ref: e51cd877e31c8fbb322032dc4cb6715e83d25ad3
+          path: mu
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Install dependencies, modern 7-Zip, and pinned Theos toolchain
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes autoconf automake bison build-essential clang curl \
+            device-tree-compiler flex gcc-aarch64-linux-gnu git libtinfo6 lld m4 make \
+            perl python3 python3-pip uuid-dev xz-utils zstd
+
+          # Install official 7-Zip 24.08 standalone with full APFS container support
+          curl -fsSL 'https://www.7-zip.org/a/7z2408-linux-x64.tar.xz' | sudo tar -xJ -C /usr/local/bin 7zz
+          sudo ln -sf /usr/local/bin/7zz /usr/local/bin/7z
+          7z --help | head -n 3
+
+          # Install lzfse for fast DeviceTree extraction
+          git clone --depth 1 https://github.com/lzfse/lzfse.git /tmp/lzfse
+          make -C /tmp/lzfse -j$(nproc)
+          sudo cp /tmp/lzfse/build/bin/lzfse /usr/local/bin/
+          rm -rf /tmp/lzfse
+
+          # Install pinned Theos toolchain
+          mkdir -p "$HOME/theos/toolchain"
+          curl --fail --location --retry 3 \
+            'https://github.com/L1ghtmann/llvm-project/releases/download/test-210562a/iOSToolchain-x86_64.tar.xz' \
+            --output "$RUNNER_TEMP/iOSToolchain-x86_64.tar.xz"
+          echo 'a72a7a577e2fbe2838b6b5e9c72034fa7d114af96f0e1d4b016f18730ce4056e  '"$RUNNER_TEMP/iOSToolchain-x86_64.tar.xz" | sha256sum --check -
+          tar -xJf "$RUNNER_TEMP/iOSToolchain-x86_64.tar.xz" -C "$HOME/theos/toolchain"
+
+          # Link ldid if present
+          if [ -f "$HOME/theos/toolchain/linux/iphone/bin/ldid" ]; then
+            sudo ln -sf "$HOME/theos/toolchain/linux/iphone/bin/ldid" /usr/local/bin/ldid
+          fi
+
+          if [ ! -d "$HOME/theos/sdks/iPhoneOS16.5.sdk" ]; then
+            git init "$HOME/theos/sdks-git"
+            git -C "$HOME/theos/sdks-git" remote add origin https://github.com/theos/sdks.git
+            git -C "$HOME/theos/sdks-git" sparse-checkout init --cone
+            git -C "$HOME/theos/sdks-git" sparse-checkout set iPhoneOS16.5.sdk
+            git -C "$HOME/theos/sdks-git" fetch --depth 1 origin 0222fd5413cf4b9af096f37b4621afa2688572f7
+            git -C "$HOME/theos/sdks-git" checkout --detach FETCH_HEAD
+            mkdir -p "$HOME/theos/sdks"
+            ln -s ../sdks-git/iPhoneOS16.5.sdk "$HOME/theos/sdks/iPhoneOS16.5.sdk"
+          fi
+
+      - name: Fetch Official Apple iOS 16.5 20F66 Restore IPSW
+        run: |
+          set -euo pipefail
+          mkdir -p input/ipsw
+          IPSW_FILE="input/ipsw/iPhone10,3,iPhone10,6_16.5_20F66_Restore.ipsw"
+          IPSW_URL="https://updates.cdn-apple.com/2023SpringFCS/fullrestores/032-85130/6AB0D10A-8AF9-4F6C-8CF5-A1B315CABE88/iPhone10,3,iPhone10,6_16.5_20F66_Restore.ipsw"
+          IPSW_SHA="c1091c401f67e3aa7cdfeb2cc19e6c79be3c957aae4e097a019e9ccea07d52f2"
+          echo "Downloading official Apple iOS 16.5 IPSW from CDN..."
+          curl --fail --location --retry 5 "$IPSW_URL" --output "$IPSW_FILE"
+          echo "Verifying IPSW SHA-256..."
+          echo "$IPSW_SHA  $IPSW_FILE" | sha256sum -c -
+
+      - name: Unpack Darwin Userland 16.5
+        run: |
+          set -euo pipefail
+          cd hakios
+          echo "Unpacking rootfs, cryptexes, dyld cache, and device tree..."
+          sysimage/unpack.sh "$GITHUB_WORKSPACE/input/ipsw/iPhone10,3,iPhone10,6_16.5_20F66_Restore.ipsw"
+          test -d sysimage/rootfs
+          test -d sysimage/cryptex
+          test -d sysimage/cryptex-app
+          test -f sysimage/DeviceTree.d22ap.im4p
+
+      - name: Build POVA MT6768 XNU Kernel & Loader with Genuine iPhone Identity
+        run: |
+          set -euo pipefail
+          cd hakios
+          make DEVICE=pova pova_defconfig
+          xnu/apply.sh
+          xnu-deps/setup.sh --stage1
+          ln -sfn "$HOME/theos/toolchain/linux/iphone/bin/dsymutil" xnu-deps/host/bin/dsymutil
+          xnu-deps/setup.sh --stage2
+          make DEVICE=pova JOBS=$(nproc) kernel
+          
+          # Generate identity.h from genuine extracted iPhone DeviceTree
+          (cd xnuloader && ./mkidentity.sh ../sysimage/DeviceTree.d22ap.im4p)
+          HAKIOS_PLATFORM=mt6768 xnuloader/build.sh
+          test -s xnuloader/loader.efi
+          test -s hakios-kernel
+
+      - name: Build HakiOS APFS Userland Images (root.apfs & system.apfs)
+        run: |
+          set -euo pipefail
+          cd hakios
+          echo "Building root.apfs init container and system.apfs 2.5 GB Darwin container..."
+          REST=1 SYSTEM=1 userland/build.sh
+          test -s userland/root.apfs
+          test -s userland/system.apfs
+          echo "APFS Containers successfully built:"
+          ls -lh userland/root.apfs userland/system.apfs
+
+      - name: Obtain POVA UEFI FD and BootShim
+        env:
+          BUILD_FROM_SOURCE: ${{ github.event.inputs.build_uefi_from_source || 'false' }}
+          GH_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN || github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p input/uefi
+          if [ "$BUILD_FROM_SOURCE" = "true" ]; then
+            echo "Building Mu-Silicium UEFI from source for POVA..."
+            bash uefi/tools/prepare-hakios-mu.sh "$GITHUB_WORKSPACE/hakios-uefi" "$GITHUB_WORKSPACE/mu"
+            (cd mu && ./setup_env.sh -p apt)
+            (cd mu && python3 build_uefi.py -d Pova -r DEBUG -c)
+            make -C mu/BootShim \
+              REQUIRES_KERNEL_HEADER=1 \
+              FD_BASE=0x40000000 \
+              FD_SIZE=0x00400000 \
+              'CFLAGS=--target=aarch64-linux-gnu -DPAYLOAD_BASE=0xF0000000'
+            fd="$(find mu/Build -type f -iname 'POVA_EFI.fd' -print -quit)"
+            cp "$fd" input/uefi/POVA_EFI.fd
+            cp mu/BootShim/BootShim.bin input/uefi/POVA_BootShim.bin
+          else
+            echo "Obtaining verified POVA UEFI FD and BootShim from release..."
+            gh release download v1.0.0-pova-unified --repo "$GITHUB_REPOSITORY" --pattern 'POVA_EFI*.fd' --dir input/uefi
+            mv input/uefi/POVA_EFI*.fd input/uefi/POVA_EFI.fd
+            gh release download v1.0.0-pova-unified --repo "$GITHUB_REPOSITORY" --pattern 'POVA_BootShim*.bin' --dir input/uefi
+            mv input/uefi/POVA_BootShim*.bin input/uefi/POVA_BootShim.bin
+          fi
+          test -s input/uefi/POVA_EFI.fd
+          test -s input/uefi/POVA_BootShim.bin
+
+      - name: Download stock LD7J boot template & Android boot tools
+        env:
+          GH_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN || github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p input/tools
+          curl --fail --location \
+            'https://android.googlesource.com/platform/system/tools/mkbootimg/+/d2bb0af5ba6d3198a3e99529c97eda1be0b5a093/unpack_bootimg.py?format=TEXT' \
+            | base64 -d > input/tools/unpack_bootimg.py
+          curl --fail --location \
+            'https://raw.githubusercontent.com/Project-Silicium/Mu-Silicium/4bd8ae83bf37de41777f19e0777db70f59383a6d/Resources/Scripts/mkbootimg.py' \
+            --output input/tools/mkbootimg.py
+          gh release download pova-bootimg-input \
+            --repo "$GITHUB_REPOSITORY" --pattern boot.img --dir input
+          mv input/boot.img input/stock-boot.img
+          echo 'd8f21f125ec880d91b1769a5c6c6d6a3b0c7f76f4fd0663d6649682f421dfc5a  input/stock-boot.img' | sha256sum -c -
+
+      - name: Assemble Unified Fastboot RAM Boot Image
+        run: |
+          set -euo pipefail
+          mkdir -p release-output
+          mkdir -p xnu-output
+          
+          # Package XNUP container with MT6768 kernel and root.apfs init container
+          kernel_version="$(cd hakios && python3 tools/kernel-version.py)"
+          python3 hakios/xnuloader/mkpayload.py \
+            --kernel-version "$kernel_version" \
+            --cmdline 'cpus=8 bootcpu=7 emmc=1 emmc_root=1 touchscreen=1' \
+            -o xnu-output/POVA_XNUP.bin \
+            kernel=hakios/hakios-kernel ramdisk=hakios/userland/root.apfs
+
+          fd_sha="$(sha256sum input/uefi/POVA_EFI.fd | awk '{print $1}')"
+          shim_sha="$(sha256sum input/uefi/POVA_BootShim.bin | awk '{print $1}')"
+          python3 uefi/tools/pack-pova-bootimg.py \
+            --stock-boot input/stock-boot.img \
+            --fd input/uefi/POVA_EFI.fd \
+            --shim input/uefi/POVA_BootShim.bin \
+            --xnup xnu-output/POVA_XNUP.bin \
+            --fd-sha256 "$fd_sha" \
+            --shim-sha256 "$shim_sha" \
+            --unpack-bootimg input/tools/unpack_bootimg.py \
+            --mkbootimg input/tools/mkbootimg.py \
+            --out-dir release-output \
+            --source-commit "$GITHUB_SHA" \
+            --xnu-source-commit "$GITHUB_SHA" \
+            --fd-release "unified-$GITHUB_SHA" \
+            --image-name POVA_HAKIOS_XNU_BOOT.img
+
+      - name: Package HakiOS POVA Restore IPSW
+        run: |
+          set -euo pipefail
+          echo "Packaging full Restore IPSW..."
+          python3 uefi/tools/pack-pova-ipsw.py \
+            --system-apfs hakios/userland/system.apfs \
+            --root-apfs hakios/userland/root.apfs \
+            --kernel hakios/hakios-kernel \
+            --bootimg release-output/POVA_HAKIOS_XNU_BOOT.img \
+            --uefi-fd input/uefi/POVA_EFI.fd \
+            --bootshim input/uefi/POVA_BootShim.bin \
+            --loader hakios/xnuloader/loader.efi \
+            --xl hakios/xl \
+            --flash-script hakios/mtk/tools/system-flash.sh \
+            -o release-output/POVA_HAKIOS_iOS16.5_Restore.ipsw
+
+      - name: Prepare Release Assets for Distribution
+        run: |
+          set -euo pipefail
+          # Stage individual core assets
+          cp hakios/userland/root.apfs hakios/hakios-kernel hakios/xnuloader/loader.efi \
+             input/uefi/POVA_EFI.fd input/uefi/POVA_BootShim.bin xnu-output/POVA_XNUP.bin \
+             release-output/
+          cp hakios/xl hakios/mtk/tools/system-flash.sh release-output/
+
+          # Compress 2.5 GB system.apfs with zstd
+          echo "Compressing system.apfs with zstd..."
+          zstd -T0 -3 hakios/userland/system.apfs -o release-output/system.apfs.zst
+
+          # Split uncompressed system.apfs to respect 2 GiB GitHub Release limit per asset
+          echo "Splitting uncompressed system.apfs into 1800M parts..."
+          split -b 1800M hakios/userland/system.apfs release-output/system.apfs.part_
+
+          # Check IPSW size and split only if larger than 2000 MB
+          ipsw_bytes="$(stat -c %s release-output/POVA_HAKIOS_iOS16.5_Restore.ipsw)"
+          echo "Generated IPSW size: $ipsw_bytes bytes"
+          if [ "$ipsw_bytes" -gt 2097152000 ]; then
+            echo "IPSW exceeds 2 GiB GitHub limit; splitting into 1800M parts..."
+            split -b 1800M release-output/POVA_HAKIOS_iOS16.5_Restore.ipsw release-output/POVA_HAKIOS_iOS16.5_Restore.ipsw.part_
+            rm -f release-output/POVA_HAKIOS_iOS16.5_Restore.ipsw
+          else
+            echo "IPSW fits cleanly within single asset limit! Keeping whole file."
+          fi
+
+          cat > release-output/README-TESTING.md <<'EOF'
+          # Tecno Pova LD7J — HakiOS Darwin iOS 16.5 Testing Guide
+
+          ## 1. RAM-Only Fastboot Boot (Recommended)
+          Zero changes to eMMC partitions. Both Darwin userland and XNU kernel run entirely in DRAM:
+
+          1. Reassemble `system.apfs` (if downloaded in parts):
+             ```bash
+             cat system.apfs.part_* > system.apfs
+             # Or decompress:
+             # zstd -d system.apfs.zst -o system.apfs
+             ```
+
+          2. Put phone into Fastboot mode:
+             ```bash
+             adb reboot bootloader
+             ```
+
+          3. Stage the 2.5 GB system APFS container into phone RAM:
+             ```bash
+             fastboot stage system.apfs
+             ```
+
+          4. Boot the temporary HakiOS fastboot image into RAM:
+             ```bash
+             fastboot boot POVA_HAKIOS_XNU_BOOT.img
+             ```
+
+          5. The phone enters Mu-Silicium UEFI, transfers control to `loader.efi`, mounts `system.apfs` in RAM as `/dev/md0` root and `root.apfs` as `/dev/md1` (`/redwood`), and starts Darwin 16.5 with all 7 native MT6768 drivers.
+          6. To return to Android: simply restart the phone.
+
+          ## 2. Restoring the Full IPSW Bundle
+          If the IPSW is uploaded whole as `POVA_HAKIOS_iOS16.5_Restore.ipsw`: use directly.
+          If downloaded in parts:
+          ```bash
+          cat POVA_HAKIOS_iOS16.5_Restore.ipsw.part_* > POVA_HAKIOS_iOS16.5_Restore.ipsw
+          ```
+          EOF
+
+          (cd release-output && sha256sum * > SHA256SUMS)
+          echo "Release output ready:"
+          ls -lh release-output/
+
+      - name: Publish Release to Private Repository
+        if: ${{ github.event.inputs.publish_release != 'false' }}
+        env:
+          GH_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN || github.token }}
+        run: |
+          set -euo pipefail
+          TARGET_REPO="${{ github.event.inputs.target_repo || 'iSciFiLite/hakios-pova-private' }}"
+          TAG="${{ github.event.inputs.release_tag || 'v1.0.0-pova-ios16.5-darwin' }}"
+
+          cat > release-output/release-notes.md <<EOF
+          # Tecno Pova LD7J HakiOS Darwin iOS 16.5 Restore & RAM Boot Release ($TAG)
+
+          Private release containing genuine Darwin 16.5 (20F66) userland, patched AArch64 XNU Darwin 22.5.0 kernel with native MT6768 drivers, Mu-Silicium UEFI firmware, and deployment tools for Tecno Pova (LD7j / MT6768 / MT6769V / Helio G80).
+
+          ## Included Assets
+          - **Fastboot RAM Boot Image**: \`POVA_HAKIOS_XNU_BOOT.img\` (fastboot RAM temporary boot)
+          - **Darwin System APFS**: \`system.apfs.zst\` & \`system.apfs.part_*\` (2.5 GB Darwin 16.5 root container)
+          - **HakiOS Root APFS**: \`root.apfs\` (redwood init container with injected dylibs and launchd jobs)
+          - **Restore IPSW**: \`POVA_HAKIOS_iOS16.5_Restore.ipsw.part_*\` (Complete restore bundle with manifests)
+          - **Kernel**: \`hakios-kernel\` (XNU Darwin 22.5.0 with 7 native MT6768 drivers)
+          - **UEFI Firmware**: \`POVA_EFI.fd\` & \`POVA_BootShim.bin\`
+          - **Bootloader**: \`loader.efi\` (standalone UEFI loader with genuine iPhone identity)
+          - **Host Tools**: \`xl\`, \`system-flash.sh\`, \`README-TESTING.md\`
+
+          ## RAM-Only Boot Quickstart
+          \`\`\`bash
+          # 1. Stage the 2.5 GB system image into RAM
+          cat system.apfs.part_* > system.apfs
+          fastboot stage system.apfs
+
+          # 2. Boot temporary image into RAM
+          fastboot boot POVA_HAKIOS_XNU_BOOT.img
+          \`\`\`
+          EOF
+
+          echo "Publishing release $TAG to $TARGET_REPO..."
+          if gh release view "$TAG" --repo "$TARGET_REPO" >/dev/null 2>&1; then
+            gh release upload "$TAG" --repo "$TARGET_REPO" --clobber release-output/*
+          else
+            gh release create "$TAG" \
+              --repo "$TARGET_REPO" \
+              --title "Tecno Pova LD7J HakiOS Darwin iOS 16.5 Release $TAG" \
+              --notes-file release-output/release-notes.md \
+              release-output/*
+          fi
+          echo "Release successfully published to $TARGET_REPO!"
