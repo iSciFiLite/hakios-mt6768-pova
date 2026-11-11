@@ -35,7 +35,7 @@ VOID
 PrintFirmwareVersion (VOID)
 {
   DEBUG ((EFI_D_WARN, "\n"));
-  DEBUG ((EFI_D_WARN, "SALAA RMX2151 MT6785\n"));
+  DEBUG ((EFI_D_WARN, "POVA LD7J MT6768\n"));
   DEBUG ((EFI_D_WARN, "Firmware Version %s Build at %a on %a\n",
           PcdGetPtr (PcdFirmwareVersionString), __TIME__, __DATE__));
   DEBUG ((EFI_D_WARN, "\n"));

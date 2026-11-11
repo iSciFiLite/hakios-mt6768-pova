@@ -34,7 +34,7 @@
   gSiliciumPkgTokenSpaceGuid.PcdFrameBufferWidth|720
   gSiliciumPkgTokenSpaceGuid.PcdFrameBufferHeight|1640
   gSiliciumPkgTokenSpaceGuid.PcdFrameBufferColorDepth|32
-  gSiliciumPkgTokenSpaceGuid.PcdFrameBufferPixelsPerScanLine|720
+  gPovaPkgTokenSpaceGuid.PcdFrameBufferPixelsPerScanLine|720
   # Serial SimpleTextInOut must connect without a user-created boot option.
   gEfiMdeModulePkgTokenSpaceGuid.PcdConInConnectOnDemand|FALSE
   gEfiMdePkgTokenSpaceGuid.PcdPlatformBootTimeOut|0

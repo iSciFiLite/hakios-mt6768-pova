@@ -46,7 +46,7 @@ for marker in (
         raise SystemExit(f"POVA GOP stride/size support is missing: {marker}")
 
 platform = (root / "Platforms/Tecno/PovaPkg/PovaPkg.dsc").read_text()
-if not re.search(r"(?m)^\s*gSiliciumPkgTokenSpaceGuid\.PcdFrameBufferPixelsPerScanLine\|720\s*$", platform):
+if not re.search(r"(?m)^\s*gPovaPkgTokenSpaceGuid\.PcdFrameBufferPixelsPerScanLine\|720\s*$", platform):
     raise SystemExit("POVA GOP stride does not match 720-pixel scanline")
 
 config = (root / "Resources/Configs/Pova.toml").read_text()

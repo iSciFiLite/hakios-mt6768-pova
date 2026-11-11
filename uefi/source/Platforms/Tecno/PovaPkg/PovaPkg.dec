@@ -11,3 +11,9 @@
 
 [Includes]
   Include
+
+[Guids.common]
+  gPovaPkgTokenSpaceGuid = { 0x6d6e1a20, 0x6768, 0x4678, { 0x85, 0x67, 0x67, 0x68, 0x00, 0x00, 0x00, 0x30 } }
+
+[PcdsFixedAtBuild.common]
+  gPovaPkgTokenSpaceGuid.PcdFrameBufferPixelsPerScanLine|720|UINT32|0x00000001

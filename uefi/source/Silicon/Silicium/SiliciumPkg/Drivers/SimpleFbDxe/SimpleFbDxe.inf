@@ -13,7 +13,7 @@
   ArmPkg/ArmPkg.dec
   MdePkg/MdePkg.dec
   MdeModulePkg/MdeModulePkg.dec
-  Platforms/Realme/NemoPkg/NemoPkg.dec
+  Platforms/Tecno/PovaPkg/PovaPkg.dec
   SiliciumPkg/SiliciumPkg.dec
 
 [LibraryClasses]
@@ -30,7 +30,7 @@
   gSiliciumPkgTokenSpaceGuid.PcdFrameBufferWidth
   gSiliciumPkgTokenSpaceGuid.PcdFrameBufferHeight
   gSiliciumPkgTokenSpaceGuid.PcdFrameBufferColorDepth
-  gNemoPkgTokenSpaceGuid.PcdFrameBufferPixelsPerScanLine
+  gPovaPkgTokenSpaceGuid.PcdFrameBufferPixelsPerScanLine
 
 [Protocols]
   gEfiGraphicsOutputProtocolGuid
