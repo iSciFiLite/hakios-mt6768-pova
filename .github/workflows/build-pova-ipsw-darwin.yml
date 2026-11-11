@@ -255,7 +255,9 @@ jobs:
           ipsw_bytes="$(stat -c %s release-output/POVA_HAKIOS_iOS16.5_Restore.ipsw)"
           echo "Generated IPSW size: $ipsw_bytes bytes"
           if [ "$ipsw_bytes" -gt 2097152000 ]; then
-            echo "IPSW exceeds 2 GiB GitHub limit; splitting into 1800M parts..."
+            echo "IPSW exceeds 2 GiB GitHub limit; creating standard 7-Zip multi-volume archive..."
+            7z a -t7z -mx=0 -v1800m release-output/POVA_HAKIOS_iOS16.5_Restore.7z release-output/POVA_HAKIOS_iOS16.5_Restore.ipsw
+            echo "Splitting into 1800M POSIX parts..."
             split -b 1800M release-output/POVA_HAKIOS_iOS16.5_Restore.ipsw release-output/POVA_HAKIOS_iOS16.5_Restore.ipsw.part_
             rm -f release-output/POVA_HAKIOS_iOS16.5_Restore.ipsw
           else
@@ -293,7 +295,11 @@ jobs:
 
           ## 2. Restoring the Full IPSW Bundle
           If the IPSW is uploaded whole as `POVA_HAKIOS_iOS16.5_Restore.ipsw`: use directly.
-          If downloaded in parts:
+          If downloaded as standard 7-Zip multi-volume archive:
+          ```bash
+          7z x POVA_HAKIOS_iOS16.5_Restore.7z.001
+          ```
+          If downloaded in POSIX parts:
           ```bash
           cat POVA_HAKIOS_iOS16.5_Restore.ipsw.part_* > POVA_HAKIOS_iOS16.5_Restore.ipsw
           ```
@@ -321,7 +327,7 @@ jobs:
           - **Fastboot RAM Boot Image**: \`POVA_HAKIOS_XNU_BOOT.img\` (fastboot RAM temporary boot)
           - **Darwin System APFS**: \`system.apfs.part_*\` (2.5 GB Darwin 16.5 root container; \`cat system.apfs.part_* > system.apfs\`)
           - **HakiOS Root APFS**: \`root.apfs\` (redwood init container with injected dylibs and launchd jobs)
-          - **Restore IPSW**: \`POVA_HAKIOS_iOS16.5_Restore.ipsw.part_*\` (Complete restore bundle with manifests)
+          - **Restore IPSW**: \`POVA_HAKIOS_iOS16.5_Restore.ipsw.part_*\` (POSIX split) & \`POVA_HAKIOS_iOS16.5_Restore.7z.001/.002\` (Universal 7-Zip format)
           - **Kernel**: \`hakios-kernel\` (XNU Darwin 22.5.0 with 7 native MT6768 drivers)
           - **UEFI Firmware**: \`POVA_EFI.fd\` & \`POVA_BootShim.bin\`
           - **Bootloader**: \`loader.efi\` (standalone UEFI loader with genuine iPhone identity)
