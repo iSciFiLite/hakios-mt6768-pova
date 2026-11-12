@@ -44,7 +44,11 @@ def main():
     rdo = d[off:off + rdo_size]; off += pages(rdo_size)
     dtb = d[off:off + dtb_size]
 
-    image = gzip.decompress(kernel) if kernel[:2] == b'\x1f\x8b' else kernel
+    if kernel[:2] == b'\x1f\x8b':
+        import zlib
+        image = zlib.decompressobj(16 + zlib.MAX_WBITS).decompress(kernel)
+    else:
+        image = kernel
     assert image[0x38:0x3c] == b'ARM\x64', 'Android kernel is not an arm64 Image'
     linux_image_size = struct.unpack_from('<Q', image, 0x10)[0]
 
